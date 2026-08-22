@@ -27,6 +27,7 @@ terraform/
 ├── locals.tf           # per-environment sizing (stg/prd), derived from the workspace
 ├── remote_state.tf      # reads VPC/subnets/node SG from auto-repair-shop-infra-k8s
 ├── rds.tf               # RDS instance, security group, Secrets Manager entry
+├── lambda_access.tf      # security group auto-repair-shop-lambda-auth attaches its function to
 └── outputs.tf
 ```
 
@@ -82,9 +83,11 @@ flowchart TB
         subgraph vpc["VPC (from auto-repair-shop-infra-k8s)"]
             subgraph priv["private subnets"]
                 eks["EKS nodes<br/>(network read via remote_state)"]
+                lambda["lambda_access SG<br/>(attached by auto-repair-shop-lambda-auth's function)"]
                 rds[("RDS PostgreSQL<br/>multi-AZ in prd")]
             end
             eks -->|":5432 · SG: EKS nodes only"| rds
+            lambda -->|":5432 · SG: lambda_access only"| rds
         end
     end
 
@@ -97,3 +100,4 @@ flowchart TB
 
 - [auto-repair-shop](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop) — the application that connects to this database
 - [auto-repair-shop-infra-k8s](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop-infra-k8s) — the cluster + VPC this database is placed into
+- [auto-repair-shop-lambda-auth](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop-lambda-auth) — attaches its function to the `lambda_access` security group created here to reach this RDS instance
