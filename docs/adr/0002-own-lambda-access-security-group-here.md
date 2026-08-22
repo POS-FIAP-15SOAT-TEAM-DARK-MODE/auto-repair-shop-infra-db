@@ -7,7 +7,7 @@
 
 ## Context
 
-`auto-repair-shop-lambda-auth` (Fase 3 issue #4) needs its Lambda function to reach this repo's RDS instance. The natural-looking design — the lambda repo creates its own security group and this repo's RDS security group grants that SG ingress on 5432 — creates a **circular cross-repo Terraform dependency**:
+`auto-repair-shop-lambda-auth` (issue #4) needs its Lambda function to reach this repo's RDS instance. The natural-looking design — the lambda repo creates its own security group and this repo's RDS security group grants that SG ingress on 5432 — creates a **circular cross-repo Terraform dependency**:
 
 - This repo (`infra-db`) already has to be applied *before* the lambda repo, because the lambda's Terraform reads `db_host` and `app_secret_arn` from this repo's remote state.
 - If the lambda repo owned the security group, this repo's RDS ingress rule would need the lambda repo's `security_group_id` output — meaning this repo would need the lambda repo applied *first* instead.
@@ -35,7 +35,7 @@ This keeps the dependency graph strictly one-directional: `infra-k8s` → `infra
 ## Alternatives considered
 
 - **A. Lambda repo owns its own security group.** Rejected — the circular dependency described above.
-- **B. A third, separate "networking glue" repo/state that both `infra-db` and `lambda-auth` depend on.** Would resolve the cycle cleanly but adds a 5th Terraform state (and likely a 5th repo, running against the Tech Challenge brief's fixed 4-repo structure) for a single security group. Disproportionate to the problem.
+- **B. A third, separate "networking glue" repo/state that both `infra-db` and `lambda-auth` depend on.** Would resolve the cycle cleanly but adds a 5th Terraform state (and likely a 5th repo, on top of our existing 4-repo structure) for a single security group. Disproportionate to the problem.
 - **C. Skip the security group entirely; make RDS ingress open to the whole VPC CIDR.** Simpler, but weakens the "least privilege" posture the existing EKS-nodes-only rule already established — rejected on security grounds.
 
 ## Notes
