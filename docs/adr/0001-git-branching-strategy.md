@@ -7,20 +7,20 @@
 
 ## Context
 
-The Tech Challenge Fase 3 brief mandates, for all 4 repositories: a protected `main`/`master` branch with no direct commits, and mandatory Pull Requests for merges. Before this decision, this repo had no branch protection at all — commits could (and did, early on) land directly on `main`.
+Our engineering governance policy requires, across all 4 repositories: a protected `main`/`master` branch with no direct commits, and mandatory Pull Requests for merges. Before this decision, this repo had no branch protection at all — commits could (and did, early on) land directly on `main`.
 
 Unlike `auto-repair-shop`, this repo has no branch-to-deploy-environment mapping — the Terraform workflow (`Infra (Terraform)`) selects `stg`/`prd` via a `workflow_dispatch` input (a Terraform workspace), independent of which git branch triggered it. So `develop` here doesn't carry the same "this merge deploys to prod" weight it does in the app repo — it exists purely for the review-staging convention.
 
 ## Decision
 
-Adopt the same two-stage flow as the other 3 Tech Challenge repos: feature/fix branches → PR into `develop`; `develop` → PR into `main`. Both branches are GitHub branch-protected: PR required to merge, enforced even for repo admins, no force-push, no branch deletion, 0 required approvals (so solo work isn't blocked, while still keeping a PR-visible history).
+Adopt the same two-stage flow as the other 3 repos: feature/fix branches → PR into `develop`; `develop` → PR into `main`. Both branches are GitHub branch-protected: PR required to merge, enforced even for repo admins, no force-push, no branch deletion, 0 required approvals (so solo work isn't blocked, while still keeping a PR-visible history).
 
 ## Consequences
 
 ### Positive
 
-- Matches the brief's explicit requirement.
-- Consistent convention across all 4 Tech Challenge repos.
+- Matches our governance policy.
+- Consistent convention across all 4 repos.
 
 ### Negative
 
@@ -28,7 +28,7 @@ Adopt the same two-stage flow as the other 3 Tech Challenge repos: feature/fix b
 
 ## Alternatives considered
 
-- **A. Trunk-based (feature → main directly).** Simpler, but inconsistent with the app repo's flow and the brief's general intent.
+- **A. Trunk-based (feature → main directly).** Simpler, but inconsistent with the app repo's flow and our general governance intent.
 
 ## Notes
 
