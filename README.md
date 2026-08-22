@@ -60,6 +60,39 @@ Environment variable (STG/PRD).
 PRs touching `terraform/**` get an automatic `fmt` + `validate` (no
 credentials required).
 
+## Step-by-step walkthrough (AWS Academy Learner Lab)
+
+Follows on directly from `auto-repair-shop-infra-k8s`'s walkthrough — run
+that repo's steps 1-5 first (bootstrap + `aws` state applied for `stg`),
+then come back here.
+
+1. **Add the same three secrets to this repo**, fresh from your Learner Lab
+   session if some time has passed (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+   `AWS_SESSION_TOKEN` — repo-level secrets, not variables):
+   this repo → **Settings → Secrets and variables → Actions → Secrets →
+   New repository secret**.
+
+2. **Run it.** Actions tab → **"Infra (Terraform)"** → Run workflow (branch:
+   this feature branch, until merged) → `environment=stg`, `action=plan`
+   first. It automatically derives the same state bucket
+   (`auto-repair-shop-tfstate-<account_id>`) and reads `infra-k8s`'s `aws`
+   state from it — no manual wiring needed, as long as step 4 in the
+   `infra-k8s` walkthrough already ran successfully. If `plan` looks sane
+   (creating an RDS instance, a security group, two Secrets Manager
+   resources), re-run with `action=apply`. Takes ~5-10 minutes for `stg`
+   (single-AZ `db.t3.micro`).
+
+3. **Grab the output.** Expand "Show outputs", copy `db_host` — you'll set
+   this as `RDS_HOST` in the `auto-repair-shop` app repo's `STG` GitHub
+   Environment (or just leave it unset: the app's `Docker` workflow
+   auto-discovers it by naming convention, `auto-repair-shop-stg-db`, if it
+   matches what got created here).
+
+4. Continue in the `auto-repair-shop` app repo: set the `STG` environment's
+   AWS secrets, then run/push to trigger the `Docker` workflow to build,
+   push, and deploy the app onto the cluster from `infra-k8s`, pointed at the
+   RDS instance created here.
+
 ## Local development
 
 Not applicable — no local/Docker path. For ad hoc `terraform plan` against a
