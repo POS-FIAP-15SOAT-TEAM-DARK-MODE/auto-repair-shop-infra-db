@@ -15,7 +15,7 @@ provisioned (or at least its `aws` layer applied) before this state can apply.
 ## Technologies
 
 - Terraform (>= 1.10), AWS provider (~> 6.0), `terraform-aws-modules/rds/aws`
-- AWS: RDS (PostgreSQL 15), Secrets Manager, Security Groups
+- AWS: RDS (PostgreSQL 15), Secrets Manager, Security Groups, CloudWatch (dashboard)
 - GitHub Actions (OIDC — no long-lived AWS keys)
 
 ## Structure
@@ -27,6 +27,7 @@ terraform/
 ├── locals.tf           # per-environment sizing (stg/prd), derived from the workspace
 ├── remote_state.tf      # reads VPC/subnets/node SG from auto-repair-shop-infra-k8s
 ├── rds.tf               # RDS instance, security group, Secrets Manager entry
+├── dashboard.tf         # CloudWatch dashboard (CPU, memory, connections)
 └── outputs.tf
 ```
 
@@ -59,6 +60,20 @@ Environment variable (STG/PRD).
 
 PRs touching `terraform/**` get an automatic `fmt` + `validate` (no
 credentials required).
+
+## Observability — CPU/memory metrics & dashboard
+
+RDS already publishes its own infra metrics to CloudWatch, no agent to
+install. `terraform/dashboard.tf` provisions a CloudWatch dashboard
+(`<project>-<env>-rds`) with CPU utilization, freeable memory and connection
+count. After apply, get the console link from the `cloudwatch_dashboard_url`
+output:
+```bash
+terraform -chdir=terraform output -raw cloudwatch_dashboard_url
+```
+
+Cluster/pod-level CPU (EKS nodes) is covered separately by
+`auto-repair-shop-infra-k8s`'s kube-prometheus-stack (Prometheus + Grafana).
 
 ## Local development
 
