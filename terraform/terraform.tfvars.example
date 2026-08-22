@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and adjust. Never commit a real terraform.tfvars.
+# Per-environment sizing (instance class, multi-AZ) is chosen by the workspace
+# (stg|prd) in locals.tf, not here.
+region               = "us-east-1"
+project              = "auto-repair-shop"
+db_name              = "autorepairshop"
+db_username          = "postgres"
+db_allocated_storage = 20
+db_engine_version    = "15"
+
+# state_bucket is normally passed by the workflow (derived from the account id);
+# set it here only for local runs: auto-repair-shop-tfstate-<account_id>.
+# Must be the SAME bucket used by auto-repair-shop-infra-k8s.
+# state_bucket = "auto-repair-shop-tfstate-000000000000"
