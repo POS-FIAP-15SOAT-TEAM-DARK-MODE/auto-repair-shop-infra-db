@@ -8,7 +8,7 @@
 # attaches its function to this pre-existing SG via terraform_remote_state.
 resource "aws_security_group" "lambda_access" {
   name_prefix = "${local.name}-lambda-access-"
-  description = "Attached by auto-repair-shop-lambda-auth's function; grants it RDS ingress below. No rules of its own - pure identity group."
+  description = "Attached by the auto-repair-shop-lambda-auth function; grants it RDS ingress below. No rules of its own - pure identity group."
   vpc_id      = data.terraform_remote_state.network.outputs.vpc_id
 
   egress {
