@@ -58,10 +58,10 @@ module "rds" {
   # so External Secrets can sync it into the cluster.
   manage_master_user_password = false
 
-  multi_az                = local.cfg.multi_az
-  subnet_ids              = data.terraform_remote_state.network.outputs.private_subnets
-  create_db_subnet_group  = true
-  vpc_security_group_ids  = [aws_security_group.rds.id]
+  multi_az               = local.cfg.multi_az
+  subnet_ids             = data.terraform_remote_state.network.outputs.private_subnets
+  create_db_subnet_group = true
+  vpc_security_group_ids = [aws_security_group.rds.id]
 
   skip_final_snapshot = !local.is_prod
   deletion_protection = local.is_prod
