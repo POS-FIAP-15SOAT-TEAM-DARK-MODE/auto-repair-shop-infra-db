@@ -93,6 +93,10 @@ flowchart TB
     gha -.->|"terraform_remote_state read"| tfk8s[("infra-k8s state<br/>aws/terraform.tfstate")]
 ```
 
+Why PostgreSQL, plus the current entity-relationship model with
+relationship explanations:
+[docs/database-justification-and-erd.md](docs/database-justification-and-erd.md).
+
 ## Related repositories
 
 - [auto-repair-shop](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop) — the application that connects to this database
