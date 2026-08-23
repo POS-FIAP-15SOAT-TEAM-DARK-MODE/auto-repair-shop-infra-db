@@ -93,9 +93,9 @@ flowchart TB
     gha -.->|"terraform_remote_state read"| tfk8s[("infra-k8s state<br/>aws/terraform.tfstate")]
 ```
 
-Why PostgreSQL, plus the current entity-relationship model with
-relationship explanations:
-[docs/database-justification-and-erd.md](docs/database-justification-and-erd.md).
+Why PostgreSQL is [ADR 0003](docs/adr/0003-postgresql-as-the-database-engine.md);
+the current entity-relationship model with relationship explanations is
+[docs/database-erd.md](docs/database-erd.md).
 
 ## Related repositories
 

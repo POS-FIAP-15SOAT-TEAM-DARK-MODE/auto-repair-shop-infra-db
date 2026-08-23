@@ -1,13 +1,8 @@
-# Database choice and entity-relationship model
+# Entity-relationship model
 
-## Why PostgreSQL
-
-1. **ACID with strong isolation via MVCC** — service orders, stock and roles get updated by multiple actors (attendant, mechanic, customer) concurrently; PostgreSQL's MVCC gives each transaction a consistent snapshot without the heavier locking a weaker isolation model would need.
-2. **Rich indexing** — partial, GIN, GiST and expression indexes fit the actual query shapes here: exact-match lookups on `customer.cpf`/`customer.cnpj`, `vehicle.license_plate`, and `service_order.status`.
-3. **Concurrent-write performance** — service order status transitions and `supply.stock_quantity` decrements happen frequently and concurrently; PostgreSQL's MVCC avoids the write contention a simpler locking model would hit under that pattern.
-4. **Analytical queries built in** — window functions and CTEs support the average-execution-time reporting (`GET /v1/reports/average-execution-time`) directly in SQL, no separate analytics store needed.
-5. **Data integrity at the schema level** — `CHECK` constraints (e.g. the `customer` type/document consistency check) and foreign keys enforce business rules the application would otherwise have to re-validate itself.
-6. **Managed-service maturity** — RDS PostgreSQL gives multi-AZ failover, automated backups and point-in-time recovery with no operational overhead beyond what's already configured in `terraform/rds.tf`.
+Why PostgreSQL specifically is recorded separately as
+[ADR 0003](adr/0003-postgresql-as-the-database-engine.md) — this doc covers
+the current shape of the schema.
 
 ## Entity-relationship diagram
 
