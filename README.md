@@ -2,8 +2,8 @@
 
 Terraform for the managed database (AWS RDS PostgreSQL) used by the
 [auto-repair-shop](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop)
-application. Split out of the app's monorepo as part of the Fase 3 (Tech
-Challenge) requirement for 4 independent repositories with their own CI/CD.
+application. Split out of the app's monorepo as part of a move to
+independently deployable services, each with its own CI/CD.
 
 This repository provisions **only** the database — it does not create or
 duplicate any networking. It reads the VPC, private subnets and the EKS node
@@ -92,6 +92,10 @@ flowchart TB
     gha -->|"OIDC (no static keys)"| aws
     gha -.->|"terraform_remote_state read"| tfk8s[("infra-k8s state<br/>aws/terraform.tfstate")]
 ```
+
+Why PostgreSQL is [ADR 0003](docs/adr/0003-postgresql-as-the-database-engine.md);
+the current entity-relationship model with relationship explanations is
+[docs/database-erd.md](docs/database-erd.md).
 
 ## Related repositories
 
