@@ -20,3 +20,8 @@ output "cloudwatch_dashboard_url" {
   description = "Console link to the RDS CPU/memory/connections dashboard"
   value       = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards:name=${aws_cloudwatch_dashboard.rds.dashboard_name}"
 }
+
+output "lambda_access_security_group_id" {
+  description = "Consumed by auto-repair-shop-lambda-auth: attach the customer-login lambda's VPC config to this SG to get RDS ingress on 5432."
+  value       = aws_security_group.lambda_access.id
+}
