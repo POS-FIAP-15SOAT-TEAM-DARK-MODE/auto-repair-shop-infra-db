@@ -26,6 +26,14 @@ resource "aws_security_group" "rds" {
     security_groups = [data.terraform_remote_state.network.outputs.node_security_group_id]
   }
 
+  ingress {
+    description     = "Postgres from the customer-login lambda (auto-repair-shop-lambda-auth)"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lambda_access.id]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -58,10 +66,10 @@ module "rds" {
   # so External Secrets can sync it into the cluster.
   manage_master_user_password = false
 
-  multi_az                = local.cfg.multi_az
-  subnet_ids              = data.terraform_remote_state.network.outputs.private_subnets
-  create_db_subnet_group  = true
-  vpc_security_group_ids  = [aws_security_group.rds.id]
+  multi_az               = local.cfg.multi_az
+  subnet_ids             = data.terraform_remote_state.network.outputs.private_subnets
+  create_db_subnet_group = true
+  vpc_security_group_ids = [aws_security_group.rds.id]
 
   skip_final_snapshot = !local.is_prod
   deletion_protection = local.is_prod

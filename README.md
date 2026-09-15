@@ -2,8 +2,8 @@
 
 Terraform for the managed database (AWS RDS PostgreSQL) used by the
 [auto-repair-shop](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop)
-application. Split out of the app's monorepo as part of the Fase 3 (Tech
-Challenge) requirement for 4 independent repositories with their own CI/CD.
+application. Split out of the app's monorepo as part of a move to
+independently deployable services, each with its own CI/CD.
 
 This repository provisions **only** the database — it does not create or
 duplicate any networking. It reads the VPC, private subnets and the EKS node
@@ -15,7 +15,7 @@ provisioned (or at least its `aws` layer applied) before this state can apply.
 ## Technologies
 
 - Terraform (>= 1.10), AWS provider (~> 6.0), `terraform-aws-modules/rds/aws`
-- AWS: RDS (PostgreSQL 15), Secrets Manager, Security Groups
+- AWS: RDS (PostgreSQL 15), Secrets Manager, Security Groups, CloudWatch (dashboard)
 - GitHub Actions (OIDC — no long-lived AWS keys)
 
 ## Structure
@@ -27,6 +27,8 @@ terraform/
 ├── locals.tf           # per-environment sizing (stg/prd), derived from the workspace
 ├── remote_state.tf      # reads VPC/subnets/node SG from auto-repair-shop-infra-k8s
 ├── rds.tf               # RDS instance, security group, Secrets Manager entry
+├── dashboard.tf         # CloudWatch dashboard (CPU, memory, connections)
+├── lambda_access.tf      # security group auto-repair-shop-lambda-auth attaches its function to
 └── outputs.tf
 ```
 
@@ -60,6 +62,53 @@ Environment variable (STG/PRD).
 PRs touching `terraform/**` get an automatic `fmt` + `validate` (no
 credentials required).
 
+## Step-by-step walkthrough (AWS Academy Learner Lab)
+
+Follows on directly from `auto-repair-shop-infra-k8s`'s walkthrough — run
+that repo's steps 1-5 first (bootstrap + `aws` state applied for `stg`),
+then come back here.
+
+1. **Add the same three secrets to this repo**, fresh from your Learner Lab
+   session if some time has passed (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+   `AWS_SESSION_TOKEN` — repo-level secrets, not variables):
+   this repo → **Settings → Secrets and variables → Actions → Secrets →
+   New repository secret**.
+
+2. **Run it.** Actions tab → **"Infra (Terraform)"** → Run workflow (branch:
+   this feature branch, until merged) → `environment=stg`, `action=plan`
+   first. It automatically derives the same state bucket
+   (`auto-repair-shop-tfstate-<account_id>`) and reads `infra-k8s`'s `aws`
+   state from it — no manual wiring needed, as long as step 4 in the
+   `infra-k8s` walkthrough already ran successfully. If `plan` looks sane
+   (creating an RDS instance, a security group, two Secrets Manager
+   resources), re-run with `action=apply`. Takes ~5-10 minutes for `stg`
+   (single-AZ `db.t3.micro`).
+
+3. **Grab the output.** Expand "Show outputs", copy `db_host` — you'll set
+   this as `RDS_HOST` in the `auto-repair-shop` app repo's `STG` GitHub
+   Environment (or just leave it unset: the app's `Docker` workflow
+   auto-discovers it by naming convention, `auto-repair-shop-stg-db`, if it
+   matches what got created here).
+
+4. Continue in the `auto-repair-shop` app repo: set the `STG` environment's
+   AWS secrets, then run/push to trigger the `Docker` workflow to build,
+   push, and deploy the app onto the cluster from `infra-k8s`, pointed at the
+   RDS instance created here.
+
+## Observability — CPU/memory metrics & dashboard
+
+RDS already publishes its own infra metrics to CloudWatch, no agent to
+install. `terraform/dashboard.tf` provisions a CloudWatch dashboard
+(`<project>-<env>-rds`) with CPU utilization, freeable memory and connection
+count. After apply, get the console link from the `cloudwatch_dashboard_url`
+output:
+```bash
+terraform -chdir=terraform output -raw cloudwatch_dashboard_url
+```
+
+Cluster/pod-level CPU (EKS nodes) is covered separately by
+`auto-repair-shop-infra-k8s`'s kube-prometheus-stack (Prometheus + Grafana).
+
 ## Local development
 
 Not applicable — no local/Docker path. For ad hoc `terraform plan` against a
@@ -82,9 +131,11 @@ flowchart TB
         subgraph vpc["VPC (from auto-repair-shop-infra-k8s)"]
             subgraph priv["private subnets"]
                 eks["EKS nodes<br/>(network read via remote_state)"]
+                lambda["lambda_access SG<br/>(attached by auto-repair-shop-lambda-auth's function)"]
                 rds[("RDS PostgreSQL<br/>multi-AZ in prd")]
             end
             eks -->|":5432 · SG: EKS nodes only"| rds
+            lambda -->|":5432 · SG: lambda_access only"| rds
         end
     end
 
@@ -93,7 +144,12 @@ flowchart TB
     gha -.->|"terraform_remote_state read"| tfk8s[("infra-k8s state<br/>aws/terraform.tfstate")]
 ```
 
+Why PostgreSQL is [ADR 0003](docs/adr/0003-postgresql-as-the-database-engine.md);
+the current entity-relationship model with relationship explanations is
+[docs/database-erd.md](docs/database-erd.md).
+
 ## Related repositories
 
 - [auto-repair-shop](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop) — the application that connects to this database
 - [auto-repair-shop-infra-k8s](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop-infra-k8s) — the cluster + VPC this database is placed into
+- [auto-repair-shop-lambda-auth](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop-lambda-auth) — attaches its function to the `lambda_access` security group created here to reach this RDS instance
