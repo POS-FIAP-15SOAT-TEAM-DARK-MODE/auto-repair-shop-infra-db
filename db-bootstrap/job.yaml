@@ -1,0 +1,49 @@
+# Runs db-bootstrap/bootstrap.sh once against the RDS instance. Applied by the
+# infra workflow (job `run`, step "Bootstrap databases"), which first creates:
+#   - ConfigMap db-bootstrap-script (key bootstrap.sh) from db-bootstrap/bootstrap.sh
+#   - Secret db-bootstrap (PGHOST, PGUSER, PGPASSWORD, PGSSLMODE, PW_*)
+# and deletes the Secret again when the step ends.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-bootstrap
+  namespace: auto-repair-shop
+  labels:
+    app: db-bootstrap
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: db-bootstrap
+    spec:
+      restartPolicy: Never
+      # The script talks only to PostgreSQL, never to the Kubernetes API.
+      automountServiceAccountToken: false
+      containers:
+        - name: psql
+          image: postgres:15-alpine
+          command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          envFrom:
+            - secretRef:
+                name: db-bootstrap
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: db-bootstrap-script
+            defaultMode: 0555
