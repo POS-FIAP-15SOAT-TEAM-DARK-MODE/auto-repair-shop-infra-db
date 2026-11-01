@@ -87,7 +87,10 @@ jobs:
           exit 1
       - name: Terraform init & apply (dynamodb, MiniStack)
         run: |
-          terraform -chdir=terraform/dynamodb init -backend=false -input=false
+          # The emulator run keeps its state local: the S3 backend is for AWS only.
+          # Written on the runner only, never committed.
+          printf 'terraform {\n  backend "local" {}\n}\n' > terraform/dynamodb/backend_override.tf
+          terraform -chdir=terraform/dynamodb init -input=false
           terraform -chdir=terraform/dynamodb apply -auto-approve -input=false \
             -var aws_endpoint="$MINISTACK_ENDPOINT"
       - name: Describe history table
