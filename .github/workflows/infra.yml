@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "terraform/**"
+      - "db-bootstrap/**"
       - ".github/workflows/infra.yml"
   workflow_dispatch:
     inputs:
@@ -17,6 +18,11 @@ on:
         type: choice
         options: [plan, apply, destroy]
         default: plan
+      layer:
+        description: "db = RDS, secrets and database bootstrap (terraform/); dynamodb = history table (terraform/dynamodb/)"
+        type: choice
+        options: [db, dynamodb]
+        default: db
 
 permissions:
   contents: read
@@ -27,7 +33,8 @@ env:
   TF_IN_AUTOMATION: "1"
 
 jobs:
-  # On PRs: no credentials, just fmt + validate.
+  # On PRs: no credentials, just fmt + validate of both states and a syntax
+  # check of the bootstrap script.
   validate:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -41,6 +48,54 @@ jobs:
           terraform fmt -check -recursive terraform
           terraform -chdir=terraform init -backend=false -input=false
           terraform -chdir=terraform validate
+          terraform -chdir=terraform/dynamodb init -backend=false -input=false
+          terraform -chdir=terraform/dynamodb validate
+      - name: bootstrap script syntax
+        run: sh -n db-bootstrap/bootstrap.sh
+
+  # On PRs: plan-free end-to-end check of the DynamoDB layer against MiniStack
+  # (AWS emulator). No AWS credentials are used.
+  dynamodb-ministack:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    services:
+      ministack:
+        image: ministackorg/ministack
+        ports:
+          - 4566:4566
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      MINISTACK_ENDPOINT: http://localhost:4566
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_wrapper: false
+      - name: Wait for MiniStack
+        run: |
+          for i in $(seq 1 30); do
+            # Any HTTP answer means the endpoint is up (curl exits 0 for 4xx/5xx too).
+            if curl -s -o /dev/null "$MINISTACK_ENDPOINT/"; then
+              echo "MiniStack is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MiniStack did not respond on $MINISTACK_ENDPOINT" >&2
+          exit 1
+      - name: Terraform init & apply (dynamodb, MiniStack)
+        run: |
+          terraform -chdir=terraform/dynamodb init -backend=false -input=false
+          terraform -chdir=terraform/dynamodb apply -auto-approve -input=false \
+            -var aws_endpoint="$MINISTACK_ENDPOINT"
+      - name: Describe history table
+        run: |
+          aws --endpoint-url "$MINISTACK_ENDPOINT" dynamodb describe-table \
+            --table-name auto-repair-shop-stg-history \
+            --query 'Table.{Name:TableName,Status:TableStatus,Keys:KeySchema}' \
+            --output json
 
   run:
     if: github.event_name == 'workflow_dispatch'
@@ -48,6 +103,12 @@ jobs:
     environment: infra
     env:
       AWS_AUTH_MODE: ${{ vars.AWS_AUTH_MODE || (secrets.AWS_ACCESS_KEY_ID != '' && 'static' || 'oidc') }}
+      ACTION: ${{ inputs.action }}
+      LAYER: ${{ inputs.layer }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      TF_DIR: ${{ inputs.layer == 'dynamodb' && 'terraform/dynamodb' || 'terraform' }}
+      NS: auto-repair-shop
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || format('auto-repair-shop-{0}-eks', inputs.environment) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -76,16 +137,75 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "STATE_BUCKET=auto-repair-shop-tfstate-${ACCOUNT_ID}" >> "$GITHUB_ENV"
 
-      - name: Terraform ${{ inputs.action }} (${{ inputs.environment }})
-        working-directory: terraform
+      - name: Terraform ${{ inputs.action }} (${{ inputs.layer }} / ${{ inputs.environment }})
         run: |
-          terraform init -backend-config="bucket=$STATE_BUCKET"
-          terraform workspace select "${{ inputs.environment }}" 2>/dev/null \
-            || terraform workspace new "${{ inputs.environment }}"
-          terraform ${{ inputs.action }} ${{ (inputs.action == 'apply' || inputs.action == 'destroy') && '-auto-approve' || '' }} \
-            -var "state_bucket=$STATE_BUCKET"
+          terraform -chdir="$TF_DIR" init -backend-config="bucket=$STATE_BUCKET"
+          terraform -chdir="$TF_DIR" workspace select "$ENVIRONMENT" 2>/dev/null \
+            || terraform -chdir="$TF_DIR" workspace new "$ENVIRONMENT"
+          # state_bucket is only needed by the db layer (remote_state for the network).
+          VARS=""
+          if [ "$LAYER" = "db" ]; then VARS="-var state_bucket=$STATE_BUCKET"; fi
+          case "$ACTION" in
+            apply|destroy) terraform -chdir="$TF_DIR" "$ACTION" -auto-approve $VARS ;;
+            *)             terraform -chdir="$TF_DIR" "$ACTION" $VARS ;;
+          esac
+
+      - name: Bootstrap databases (db-bootstrap Job)
+        if: inputs.action == 'apply' && inputs.layer == 'db'
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME"
+          kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+
+          DB_HOST=$(terraform -chdir=terraform output -raw db_host)
+          SERVICE_ARNS=$(terraform -chdir=terraform output -json service_secret_arns)
+          LAMBDA_ARN=$(terraform -chdir=terraform output -raw lambda_secret_arn)
+
+          # Reads POSTGRES_PASSWORD of a secret; values are masked and written only to a 0600 file.
+          read_pw() {
+            aws secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text \
+              | jq -r '.POSTGRES_PASSWORD'
+          }
+          add_pw() { # add_pw <ENV_NAME> <secret-id>
+            local v
+            v=$(read_pw "$2")
+            echo "::add-mask::$v"
+            echo "$1=$v" >> "$ENV_FILE"
+          }
+          svc_arn() { echo "$SERVICE_ARNS" | jq -r --arg k "$1" '.[$k]'; }
+
+          ENV_FILE="$(mktemp)"
+          trap 'rm -f "$ENV_FILE"' EXIT
+          : > "$ENV_FILE"
+          echo "PGHOST=$DB_HOST" >> "$ENV_FILE"
+          echo "PGUSER=postgres" >> "$ENV_FILE"
+          echo "PGSSLMODE=require" >> "$ENV_FILE"
+          add_pw PGPASSWORD "auto-repair-shop-${ENVIRONMENT}/app"
+          add_pw PW_CUSTOMER "$(svc_arn customer)"
+          add_pw PW_CATALOG "$(svc_arn catalog)"
+          add_pw PW_BILLING "$(svc_arn billing)"
+          add_pw PW_EXECUTION "$(svc_arn execution)"
+          add_pw PW_SERVICE_ORDER "$(svc_arn service-order)"
+          add_pw PW_LAMBDA "$LAMBDA_ARN"
+
+          kubectl -n "$NS" create secret generic db-bootstrap \
+            --from-env-file="$ENV_FILE" --dry-run=client -o yaml | kubectl -n "$NS" apply -f -
+          kubectl -n "$NS" create configmap db-bootstrap-script \
+            --from-file=bootstrap.sh=db-bootstrap/bootstrap.sh --dry-run=client -o yaml | kubectl -n "$NS" apply -f -
+
+          # Job spec is immutable: delete any finished Job from a previous run first.
+          kubectl -n "$NS" delete job db-bootstrap --ignore-not-found --wait=true
+          kubectl -n "$NS" apply -f db-bootstrap/job.yaml
+          if ! kubectl -n "$NS" wait --for=condition=complete --timeout=300s job/db-bootstrap; then
+            kubectl -n "$NS" logs job/db-bootstrap --all-containers || true
+            exit 1
+          fi
+          kubectl -n "$NS" logs job/db-bootstrap
+
+      - name: Remove db-bootstrap Secret
+        if: always() && inputs.action == 'apply' && inputs.layer == 'db'
+        run: kubectl -n "$NS" delete secret db-bootstrap --ignore-not-found
 
       - name: Show outputs
         if: inputs.action == 'apply'
-        working-directory: terraform
-        run: terraform output
+        run: terraform -chdir="$TF_DIR" output
