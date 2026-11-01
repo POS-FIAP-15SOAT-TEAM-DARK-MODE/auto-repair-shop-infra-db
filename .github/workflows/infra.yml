@@ -166,16 +166,22 @@ jobs:
 
           # Reads POSTGRES_PASSWORD of a secret; values are masked and written only to a 0600 file.
           read_pw() {
-            aws secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text \
+            local secret_id="$1"
+            aws secretsmanager get-secret-value --secret-id "$secret_id" --query SecretString --output text \
               | jq -r '.POSTGRES_PASSWORD'
           }
           add_pw() { # add_pw <ENV_NAME> <secret-id>
+            local env_name="$1"
+            local secret_id="$2"
             local v
-            v=$(read_pw "$2")
+            v=$(read_pw "$secret_id")
             echo "::add-mask::$v"
-            echo "$1=$v" >> "$ENV_FILE"
+            echo "$env_name=$v" >> "$ENV_FILE"
           }
-          svc_arn() { echo "$SERVICE_ARNS" | jq -r --arg k "$1" '.[$k]'; }
+          svc_arn() {
+            local key="$1"
+            echo "$SERVICE_ARNS" | jq -r --arg k "$key" '.[$k]'
+          }
 
           ENV_FILE="$(mktemp)"
           trap 'rm -f "$ENV_FILE"' EXIT

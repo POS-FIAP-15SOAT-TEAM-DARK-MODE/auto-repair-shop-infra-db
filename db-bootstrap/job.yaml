@@ -18,6 +18,8 @@ spec:
         app: db-bootstrap
     spec:
       restartPolicy: Never
+      # The script talks only to PostgreSQL, never to the Kubernetes API.
+      automountServiceAccountToken: false
       containers:
         - name: psql
           image: postgres:15-alpine
@@ -25,6 +27,17 @@ spec:
           envFrom:
             - secretRef:
                 name: db-bootstrap
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+              ephemeral-storage: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
           volumeMounts:
             - name: script
               mountPath: /scripts

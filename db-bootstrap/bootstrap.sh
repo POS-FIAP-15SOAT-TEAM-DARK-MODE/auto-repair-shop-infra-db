@@ -33,7 +33,10 @@ admin_sql() {
 # first (required on RDS to set OWNER). \gexec runs the generated statement
 # only when the guard query returns a row, which keeps re-runs no-ops.
 provision_service() {
-  admin_sql -v role="$1" -v db="$2" -v pw="$3" <<'SQL'
+  local role="$1"
+  local db="$2"
+  local pw="$3"
+  admin_sql -v role="$role" -v db="$db" -v pw="$pw" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', :'role')
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'pw') \gexec
@@ -46,7 +49,8 @@ SQL
 
 # provision_lambda_role <password>: read-only login role for the customer-login lambda.
 provision_lambda_role() {
-  admin_sql -v role="lambda_auth_ro" -v pw="$1" <<'SQL'
+  local pw="$1"
+  admin_sql -v role="lambda_auth_ro" -v pw="$pw" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN', :'role')
  WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'pw') \gexec
