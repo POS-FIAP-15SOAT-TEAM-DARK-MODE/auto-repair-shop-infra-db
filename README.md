@@ -112,6 +112,12 @@ completion and prints the logs. The Secret is deleted at the end of the step, ev
   ```
   Passwords are arbitrary local values; never commit real ones.
 
+  Verified on 2026-11-02 against `postgres:15-alpine` (real server, not a mock): both runs ended with exit 0
+  (the second only prints `already a member` notices), each database is owned by its service role, and
+  `catalog_app` connecting to the `customer` database is refused (`User does not have CONNECT privilege`).
+  `terraform plan` of the `shared`, `messaging` and `aws` stacks is not covered here: it needs AWS credentials
+  and runs only in the GitHub Actions workflow.
+
 ## Deploy — driven from GitHub Actions
 
 No AWS tooling is needed on your machine; applied via GitHub Actions (OIDC).
