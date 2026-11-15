@@ -1,15 +1,23 @@
-# Entity-relationship model
+# Entity-relationship model (one model per database)
 
-Why PostgreSQL specifically is recorded separately as
-[ADR 0003](adr/0003-postgresql-as-the-database-engine.md) — this doc covers
-the current shape of the schema.
+Each service owns its database (see [ADR 0005](adr/0005-one-rds-instance-database-per-service.md)),
+so there is one diagram per database. They are derived from the DDL contract in
+`docs/fase4/contracts/ddl.md` of the umbrella repository. The shared
+`processed_message` and `outbox` tables are described once, below.
 
-## Entity-relationship diagram
+There are **no foreign keys across databases**. Columns such as
+`service_order_id`, `customer_user_id` or `budget_item.ref_id` are logical
+references: they are validated by the services over HTTP or messages, never by
+the database.
 
-Generated from the live schema in `auto-repair-shop`'s
-[`migrations/000001_init_schema.up.sql`](https://github.com/POS-FIAP-15SOAT-TEAM-DARK-MODE/auto-repair-shop/blob/develop/migrations/000001_init_schema.up.sql)
-— table names, columns and cardinalities below match what's actually
-deployed, not an earlier design draft.
+The single-schema diagram of the monolith (before the split) is in the git
+history of this file.
+
+## `customer` — Customer & Identity (`customer_app`)
+
+Tables `"user"`, `role`, `user_role`, `customer` and `vehicle` are copies of the
+monolith's `000001_init_schema`. `work`, `supply` and the service-order tables are
+not in this database.
 
 ```mermaid
 erDiagram
@@ -23,8 +31,8 @@ erDiagram
     }
 
     ROLE {
-        varchar id PK
-        varchar name UK "ADMIN | MECHANIC | ATTENDANT | CUSTOMER"
+        varchar id PK "'1' ADMIN, '2' MECHANIC, '3' ATTENDANT, '4' CUSTOMER"
+        varchar name UK
         timestamptz created_at
     }
 
@@ -36,11 +44,11 @@ erDiagram
 
     CUSTOMER {
         varchar id PK
-        varchar user_id FK "unique — 1:1 with USER"
+        varchar user_id FK "unique: 1:1 with USER"
         varchar type "INDIVIDUAL | COMPANY"
-        varchar cpf UK "nullable, set when type = INDIVIDUAL"
-        varchar cnpj UK "nullable, set when type = COMPANY"
-        varchar company_name "nullable, set when type = COMPANY"
+        varchar cpf UK "set when type = INDIVIDUAL"
+        varchar cnpj UK "set when type = COMPANY"
+        varchar company_name "set when type = COMPANY"
         varchar phone
         timestamptz created_at
         timestamptz updated_at
@@ -57,12 +65,28 @@ erDiagram
         timestamptz updated_at
     }
 
+    USER ||--o{ USER_ROLE : "has"
+    ROLE ||--o{ USER_ROLE : "assigned to"
+    USER ||--o| CUSTOMER : "linked as"
+    CUSTOMER ||--o{ VEHICLE : "owns"
+```
+
+- `USER` ↔ `CUSTOMER` is 1:1 and optional on the `USER` side: staff accounts
+  (ADMIN, MECHANIC, ATTENDANT) have no `CUSTOMER` row.
+- The customer-login lambda (`lambda_auth_ro`) reads this database only:
+  `customer.cpf` → `customer.user_id` → roles through `user_role`.
+- The physical table name of `USER` is `"user"` (quoted, a reserved word).
+
+## `catalog` — Catalog (`catalog_app`)
+
+```mermaid
+erDiagram
     WORK {
         varchar id PK
         varchar name
         text description
-        numeric unit_price
-        boolean status "active/inactive"
+        numeric unit_price "NUMERIC(10,2)"
+        boolean status "true = active"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -72,77 +96,112 @@ erDiagram
         varchar name
         text description
         numeric unit_price
-        int stock_quantity
+        int stock_quantity "default 0"
         int version "optimistic locking"
         timestamptz created_at
         timestamptz updated_at
     }
 
-    SERVICE_ORDER {
+    STOCK_RESERVATION {
         varchar id PK
-        varchar customer_id FK
-        varchar vehicle_id FK
-        varchar status "NEW|RECEIVED|IN_DIAGNOSIS|AWAITING_APPROVAL|REJECTED|IN_PROGRESS|COMPLETED|DELIVERED|CANCELLED"
+        varchar service_order_id "logical reference, not a FK"
+        varchar supply_id FK
+        int quantity "> 0"
+        varchar status "RESERVED | RELEASED"
+        timestamptz created_at
+        timestamptz released_at
+    }
+
+    PROCESSED_MESSAGE {
+        uuid message_id PK
+        timestamptz processed_at
+    }
+
+    SUPPLY ||--o{ STOCK_RESERVATION : "reserved in"
+```
+
+- `UNIQUE (service_order_id, supply_id)` on `STOCK_RESERVATION`: a reservation is
+  re-activated (`RELEASED` → `RESERVED`) instead of duplicated.
+- Stock is decremented and returned in the same transaction as the reservation row.
+- `WORK` and `SUPPLY` are separate, as in the monolith (only `SUPPLY` has stock).
+- Catalog consumes messages and does not publish, so it has no `OUTBOX`.
+
+## `billing` — Billing (`billing_app`)
+
+```mermaid
+erDiagram
+    BUDGET {
+        varchar id PK
+        varchar service_order_id "logical reference, not a FK"
+        varchar customer_user_id "scope: the CUSTOMER reads only own budgets"
+        varchar status "GENERATED | CANCELLED"
         numeric total_amount
-        timestamptz quote_sent_at "nullable"
-        timestamptz completed_at "nullable"
-        timestamptz delivered_at "nullable"
         timestamptz created_at
         timestamptz updated_at
     }
 
-    SERVICE_ORDER_WORK {
+    BUDGET_ITEM {
         varchar id PK
-        varchar service_order_id FK
-        varchar work_id FK
-        numeric unit_price "snapshot at association time"
+        varchar budget_id FK
+        varchar kind "WORK | SUPPLY"
+        varchar ref_id "work_id or supply_id, logical reference"
+        varchar name
+        int quantity "> 0"
+        numeric unit_price
     }
 
-    SERVICE_ORDER_SUPPLY {
+    PAYMENT {
         varchar id PK
-        varchar service_order_id FK
-        varchar supply_id FK
-        int quantity
-        numeric unit_price "snapshot at association time"
-    }
-
-    SERVICE_ORDER_STATUS_HISTORY {
-        varchar id PK
-        varchar service_order_id FK
-        varchar previous_status
-        varchar new_status
+        varchar budget_id FK
+        varchar service_order_id "logical reference, not a FK"
+        numeric amount
+        varchar status "PENDING | APPROVED | REJECTED | REFUNDED | CANCELLED"
+        varchar provider "internal (future: mercadopago)"
         timestamptz created_at
+        timestamptz updated_at
     }
 
-    WORK_SERVICE_ORDER_STATUS_HISTORY {
-        varchar id PK
-        varchar work_id FK
-        varchar service_order_id FK
-        varchar previous_status
-        varchar new_status
+    OUTBOX {
+        bigint id PK
+        uuid message_id UK
+        varchar topic "billing-events, ..."
+        varchar target "saga-commands only"
+        varchar type
+        jsonb body "full message envelope"
         timestamptz created_at
+        timestamptz published_at "null = not yet published"
     }
 
-    USER ||--o{ USER_ROLE : "has"
-    ROLE ||--o{ USER_ROLE : "assigned to"
-    USER ||--o| CUSTOMER : "linked as"
-    CUSTOMER ||--o{ VEHICLE : "owns"
-    CUSTOMER ||--o{ SERVICE_ORDER : "requests"
-    VEHICLE ||--o{ SERVICE_ORDER : "linked to"
-    SERVICE_ORDER ||--o{ SERVICE_ORDER_WORK : "contains"
-    WORK ||--o{ SERVICE_ORDER_WORK : "included in"
-    SERVICE_ORDER ||--o{ SERVICE_ORDER_SUPPLY : "contains"
-    SUPPLY ||--o{ SERVICE_ORDER_SUPPLY : "used in"
-    SERVICE_ORDER ||--o{ SERVICE_ORDER_STATUS_HISTORY : "records"
-    SERVICE_ORDER ||--o{ WORK_SERVICE_ORDER_STATUS_HISTORY : "records per-work progress for"
-    WORK ||--o{ WORK_SERVICE_ORDER_STATUS_HISTORY : "tracked in"
+    PROCESSED_MESSAGE {
+        uuid message_id PK
+        timestamptz processed_at
+    }
+
+    BUDGET ||--o{ BUDGET_ITEM : "contains"
+    BUDGET ||--o{ PAYMENT : "paid by"
 ```
 
-## Relationship notes
+- Partial unique indexes enforce the business rules: one `GENERATED` budget per
+  service order, and one open payment (`PENDING` or `APPROVED`) per service order.
+- Payment transitions: `PENDING → APPROVED | REJECTED | CANCELLED`, `APPROVED → REFUNDED`.
+  A refund request on a final state is ignored (idempotent) and the event is published once.
 
-- **`USER` ↔ `CUSTOMER` is 1:1, not 1:1-optional-both-ways.** Every `CUSTOMER` requires a `USER` (`user_id NOT NULL UNIQUE`), but not every `USER` is a customer — staff accounts (`ADMIN`, `MECHANIC`, `ATTENDANT`) are `USER` rows with no matching `CUSTOMER` row. This is also how the `lambda-auth` customer-login function resolves a CPF: `customer.cpf` → `customer.user_id` → roles via `USER_ROLE`.
-- **`USER` ↔ `ROLE` is many-to-many** through `USER_ROLE`, so a single user can hold multiple roles simultaneously (e.g. an `ADMIN` who is also an `ATTENDANT`).
-- **`WORK` vs. `SUPPLY`** are deliberately separate entities rather than a single "line item" table: `WORK` is a billable service with no stock concept; `SUPPLY` carries `stock_quantity` and an optimistic-locking `version` column, since parts get decremented under concurrent service orders and need conflict detection that a labor line item never does.
-- **Two status-history tables, not one.** `SERVICE_ORDER_STATUS_HISTORY` tracks the order's own status transitions; `WORK_SERVICE_ORDER_STATUS_HISTORY` separately tracks each individual work item's progress *within* a service order (e.g. one work item can be `IN_PROGRESS` while another on the same order is already `COMPLETED`). Collapsing these into one table would conflate order-level and work-level state machines that advance independently.
-- **`SERVICE_ORDER_WORK` and `SERVICE_ORDER_SUPPLY` both snapshot `unit_price`** at the time the work/supply is added to the order, rather than joining live to `WORK.unit_price`/`SUPPLY.unit_price`. A later price change on the catalog item must not retroactively alter the total on an already-quoted or already-approved order.
-- **Cascading deletes are deliberate, not incidental.** `ON DELETE CASCADE` runs from `USER` down through `CUSTOMER`, `VEHICLE` and `USER_ROLE`, and from `SERVICE_ORDER` down through its line items and status history — removing a customer's user account or a service order is expected to take its dependent rows with it, rather than leaving orphaned records.
+## `execution` and `service_order`
+
+Not yet specified in `ddl.md` (the DDL contract covers `customer`, `catalog` and
+`billing` so far). Their diagrams will be added when the contract is written.
+
+## `history` — History & Reporting (DynamoDB)
+
+Not a relational database. It is one DynamoDB table,
+`auto-repair-shop-<env>-history`, defined in `terraform/dynamodb/`
+(see [ADR 0006](adr/0006-dynamodb-for-history.md)).
+
+| Key | Attribute | Type |
+|---|---|---|
+| Partition key | `PK` | S |
+| Sort key | `SK` | S |
+
+Billing mode is `PAY_PER_REQUEST`. The item shapes (which `PK`/`SK` patterns
+and attributes each event produces) belong to the History service and are not
+in the contracts yet. They must be defined there before the model can be drawn.
